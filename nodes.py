@@ -5,8 +5,8 @@ import re
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from .tools import VariantSupport
-from comfy.graph_utils import GraphBuilder, is_link
-from comfy.graph import DynamicPrompt
+from comfy_execution.graph_utils import GraphBuilder, is_link
+from comfy_execution.graph import DynamicPrompt
 
 indentation_regex = re.compile(r"^[ \t]+")
 
