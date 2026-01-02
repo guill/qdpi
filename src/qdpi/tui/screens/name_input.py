@@ -10,7 +10,7 @@ from textual.widgets import Input, Label, Static
 from qdpi.utils.paths import is_valid_environment_name
 
 
-class NameInputScreen(Screen):
+class NameInputScreen(Screen[None]):
     """Screen for entering environment name."""
 
     class Submitted(Message):

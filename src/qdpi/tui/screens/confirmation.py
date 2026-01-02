@@ -11,7 +11,7 @@ from qdpi.config.models import Config
 from qdpi.core.template import TemplateEngine
 
 
-class ConfirmationScreen(Screen):
+class ConfirmationScreen(Screen[None]):
     """Screen for confirming environment creation."""
 
     BINDINGS = [
@@ -63,13 +63,13 @@ class ConfirmationScreen(Screen):
 
             if templates_to_generate:
                 yield Static("\n[bold]Files to generate:[/bold]")
-                for template in templates_to_generate:
-                    yield Static(f"  • {template}")
+                for tpl_dest in templates_to_generate:
+                    yield Static(f"  • {tpl_dest}")
 
             if symlinks_to_create:
                 yield Static("\n[bold]Symlinks:[/bold]")
-                for symlink in symlinks_to_create:
-                    yield Static(f"  • {symlink}")
+                for sym_desc in symlinks_to_create:
+                    yield Static(f"  • {sym_desc}")
 
             yield Static("\n")
             yield Button("Create Environment", variant="primary", id="create-btn")

@@ -9,7 +9,7 @@ from textual.widgets import Button, Label, SelectionList, Static
 from textual.widgets.selection_list import Selection
 
 
-class RepoSelectScreen(Screen):
+class RepoSelectScreen(Screen[None]):
     """Screen for selecting repositories."""
 
     BINDINGS = [

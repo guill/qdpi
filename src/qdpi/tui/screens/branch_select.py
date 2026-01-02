@@ -14,7 +14,7 @@ from qdpi.config.models import Config
 from qdpi.core.git import GitOperations
 
 
-class BranchSelectScreen(Screen):
+class BranchSelectScreen(Screen[None]):
     """Screen for selecting branches for each repository."""
 
     BINDINGS = [
@@ -41,7 +41,7 @@ class BranchSelectScreen(Screen):
         self.branches = dict(initial_branches or {})
         self.current_repo_index = 0
         self.repo_branch_lists: dict[str, list[str]] = {}
-        self.loading: set[str] = set()
+        self.loading_repos: set[str] = set()
 
     def compose(self) -> ComposeResult:
         with Container(id="main-container"):
@@ -49,7 +49,7 @@ class BranchSelectScreen(Screen):
             yield Label("Select branch for each repository:", classes="title")
 
             with Vertical(id="branch-selectors"):
-                for i, repo in enumerate(self.repos):
+                for repo in self.repos:
                     default_branch = self.branches.get(repo, "main")
                     with Container(classes="repo-branch-item", id=f"repo-{repo}"):
                         yield Label(f"{repo}:")
@@ -69,7 +69,7 @@ class BranchSelectScreen(Screen):
     def on_mount(self) -> None:
         """Start fetching branches for all repos."""
         for repo in self.repos:
-            self.loading.add(repo)
+            self.loading_repos.add(repo)
             self._fetch_branches(repo)
 
         # Focus first input
@@ -81,8 +81,8 @@ class BranchSelectScreen(Screen):
 
     def _update_status(self) -> None:
         """Update the status text."""
-        if self.loading:
-            status = f"Fetching branches for: {', '.join(self.loading)}..."
+        if self.loading_repos:
+            status = f"Fetching branches for: {', '.join(self.loading_repos)}..."
         else:
             status = "All branches loaded."
         self.query_one("#status-text", Static).update(status)
@@ -94,7 +94,7 @@ class BranchSelectScreen(Screen):
 
         if not base_repo.exists():
             # Repository not cloned yet - we'll use a placeholder
-            self.loading.discard(repo)
+            self.loading_repos.discard(repo)
             self._update_status()
             return
 
@@ -112,7 +112,7 @@ class BranchSelectScreen(Screen):
             # Non-fatal - user can still type branch name
             pass
         finally:
-            self.loading.discard(repo)
+            self.loading_repos.discard(repo)
             self._update_status()
 
     @on(OptionList.OptionSelected)

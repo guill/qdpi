@@ -1,21 +1,20 @@
 """QDPI CLI - Quick Development PIpeline."""
 
 import json
-import sys
 from typing import Annotated, NoReturn
 
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.prompt import Confirm, Prompt
+from rich.table import Table
 
 from qdpi.config.loader import (
+    GLOBAL_CONFIG_PATH,
     ConfigError,
     init_config,
     load_config,
-    GLOBAL_CONFIG_PATH,
 )
-from qdpi.core.environment import EnvironmentManager, EnvironmentError
+from qdpi.core.environment import EnvironmentError, EnvironmentManager
 from qdpi.core.git import GitOperations  # noqa: F401
 
 app = typer.Typer(
@@ -55,9 +54,9 @@ def init(
     try:
         path = init_config(force=force)
         console.print(f"[green]Created configuration file:[/green] {path}")
-        console.print(f"\nEdit the config to add your repositories:")
+        console.print("\nEdit the config to add your repositories:")
         console.print(f"  $EDITOR {path}")
-        console.print(f"\nOptionally add templates to:")
+        console.print("\nOptionally add templates to:")
         console.print(f"  {path.parent / 'templates/'}")
     except ConfigError as e:
         handle_error(str(e))
@@ -324,7 +323,7 @@ def info(
                         "error": s.status.error,
                     },
                 }
-                for r, s in zip(env.repos, status.repos)
+                for r, s in zip(env.repos, status.repos, strict=True)
             ],
             "generated_files": env.generated_files,
             "symlinks": [{"source": s.source, "target": s.target} for s in env.symlinks],
@@ -342,7 +341,7 @@ def info(
         return
 
     console.print("\n[bold]Repositories:[/bold]")
-    for repo, repo_status in zip(env.repos, status.repos):
+    for repo, repo_status in zip(env.repos, status.repos, strict=True):
         console.print(f"\n  [cyan]{repo.name}[/cyan]")
         console.print(f"    Branch: {repo.branch}")
         console.print(f"    Path: ./{repo.name}/")

@@ -1,19 +1,20 @@
 """Environment manager for QDPI."""
 
+import contextlib
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from qdpi.config.models import Config
-from qdpi.core.git import GitOperations, GitError, RepoStatus
+from qdpi.core.git import GitError, GitOperations, RepoStatus
 from qdpi.core.template import TemplateEngine, TemplateEngineError
 from qdpi.registry.registry import (
     Environment,
     EnvironmentRegistry,
+    RegistryError,
     RepoInstance,
     SymlinkEntry,
-    RegistryError,
 )
 from qdpi.utils.paths import is_valid_environment_name
 
@@ -100,11 +101,8 @@ class EnvironmentManager:
         """Fetch latest from remote for a repository."""
         base_path = self.config.base_repos_dir / repo_name
         if base_path.exists():
-            try:
+            with contextlib.suppress(GitError):
                 GitOperations.fetch(base_path)
-            except GitError:
-                # Non-fatal: we can continue with existing local state
-                pass
 
     def create(
         self,
@@ -311,24 +309,18 @@ class EnvironmentManager:
             worktree_path = Path(repo.worktree_path)
             base_repo = self.config.base_repos_dir / repo.name
             if base_repo.exists():
-                try:
+                with contextlib.suppress(GitError):
                     GitOperations.remove_worktree(base_repo, worktree_path, force=force)
-                except GitError:
-                    pass  # Continue even if worktree removal fails
-                try:
+                with contextlib.suppress(GitError):
                     GitOperations.prune_worktrees(base_repo)
-                except GitError:
-                    pass
 
         # Remove directory
         if env_path.exists():
             shutil.rmtree(env_path, ignore_errors=True)
 
         # Remove from registry
-        try:
+        with contextlib.suppress(RegistryError):
             self.registry.remove(name)
-        except RegistryError:
-            pass  # Already removed or never existed
 
     def get_status(self, name: str) -> EnvironmentStatus:
         """

@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from qdpi.utils.paths import get_registry_path, ensure_data_dir
+from qdpi.utils.paths import ensure_data_dir, get_registry_path
 
 
 @dataclass

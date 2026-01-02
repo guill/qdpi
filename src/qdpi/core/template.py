@@ -3,7 +3,8 @@
 from datetime import datetime
 from pathlib import Path
 
-from jinja2 import Environment as JinjaEnv, FileSystemLoader, TemplateError
+from jinja2 import Environment as JinjaEnv
+from jinja2 import FileSystemLoader, TemplateError
 
 from qdpi.config.models import TemplateConfig
 from qdpi.registry.registry import RepoInstance, SymlinkEntry

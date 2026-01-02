@@ -1,19 +1,18 @@
 """QDPI TUI Application."""
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.binding import Binding
-from textual.screen import Screen
-from textual.widgets import Footer, Header
 
-from qdpi.config.loader import load_config, ConfigError
-from qdpi.core.environment import EnvironmentManager, EnvironmentError
-from qdpi.tui.screens.name_input import NameInputScreen
-from qdpi.tui.screens.repo_select import RepoSelectScreen
+from qdpi.config.loader import ConfigError, load_config
+from qdpi.config.models import Config
+from qdpi.core.environment import EnvironmentError, EnvironmentManager
 from qdpi.tui.screens.branch_select import BranchSelectScreen
 from qdpi.tui.screens.confirmation import ConfirmationScreen
+from qdpi.tui.screens.name_input import NameInputScreen
+from qdpi.tui.screens.repo_select import RepoSelectScreen
 
 
-class QdpiApp(App):
+class QdpiApp(App[int]):
     """QDPI TUI Application for creating environments."""
 
     TITLE = "QDPI - Create Environment"
@@ -85,13 +84,14 @@ class QdpiApp(App):
         self.repo_branches: dict[str, str] = {}
 
         # Load config
+        self.config: Config | None = None
+        self.manager: EnvironmentManager | None = None
+        self.config_error: str = ""
         try:
             self.config = load_config()
             self.manager = EnvironmentManager(self.config)
             self.available_repos = list(self.config.repositories.keys())
         except ConfigError as e:
-            self.config = None
-            self.manager = None
             self.available_repos = []
             self.config_error = str(e)
 
@@ -112,7 +112,7 @@ class QdpiApp(App):
         # Start with name input screen
         self.push_screen(NameInputScreen(self.env_name))
 
-    def action_back(self) -> None:
+    async def action_back(self) -> None:
         """Go back to previous screen, or quit if on first screen."""
         # If we're on the first user screen (NameInputScreen), quit instead of going back
         # to an empty default screen
@@ -122,7 +122,7 @@ class QdpiApp(App):
         else:
             self.pop_screen()
 
-    def action_quit(self) -> None:
+    async def action_quit(self) -> None:
         """Quit the application."""
         self.exit(1)
 
@@ -142,6 +142,7 @@ class QdpiApp(App):
             if repo not in self.repo_branches:
                 self.repo_branches[repo] = "main"
 
+        assert self.config is not None
         self.push_screen(
             BranchSelectScreen(
                 self.config,
@@ -154,6 +155,7 @@ class QdpiApp(App):
         """Handle branch selection submission."""
         self.repo_branches = event.branches
         self.pop_screen()
+        assert self.config is not None
         self.push_screen(
             ConfirmationScreen(
                 self.env_name,
