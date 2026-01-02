@@ -1,0 +1,45 @@
+# QDPI Example Configuration
+# Copy this to ~/.config/qdpi/config.yaml and customize
+
+# Where base repositories are cloned (worktree sources)
+base_repos_dir: ~/.local/share/qdpi/repos
+
+# Where environments are created
+environments_dir: ~/qdpi-envs
+
+# Repository definitions
+repositories:
+  backend:
+    url: git@github.com:your-org/backend.git
+  
+  frontend:
+    url: git@github.com:your-org/frontend.git
+  
+  api:
+    url: git@github.com:your-org/api.git
+  
+  docs:
+    url: git@github.com:your-org/docs.git
+
+# Jinja2 templates to render into environments
+templates:
+  - source: ~/.config/qdpi/templates/AGENTS.md.j2
+    destination: AGENTS.md
+    # Generates for all environments
+  
+  - source: ~/.config/qdpi/templates/Makefile.j2
+    destination: Makefile
+    # Only generates when both repos are present
+    when: [backend, frontend]
+
+# Static files to copy (no templating)
+copy_files: []
+  # Example:
+  # - source: ~/.config/qdpi/files/.editorconfig
+  #   destination: .editorconfig
+
+# Symlinks to create between repositories
+symlinks:
+  - source: backend/shared
+    target: frontend/src/shared
+    when: [backend, frontend]
