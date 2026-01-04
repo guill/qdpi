@@ -14,8 +14,16 @@ from qdpi.config.loader import (
     init_config,
     load_config,
 )
+from qdpi.config.models import Config
 from qdpi.core.environment import EnvironmentError, EnvironmentManager
 from qdpi.core.git import GitOperations  # noqa: F401
+from qdpi.registry.registry import PRInfo
+from qdpi.utils.github import (
+    GitHubError,
+    GitHubOperations,
+    parse_github_repo,
+    parse_pr_reference,
+)
 
 app = typer.Typer(
     name="qdpi",
@@ -172,6 +180,162 @@ def create(
         handle_error(str(e))
 
 
+@app.command()
+def review(
+    pr_ref: Annotated[
+        str | None,
+        typer.Argument(help="PR URL or shorthand (e.g., backend#123)"),
+    ] = None,
+    repos: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--repo",
+            "-r",
+            help="Add companion repository with branch (format: REPO:BRANCH)",
+        ),
+    ] = None,
+    name: Annotated[
+        str | None,
+        typer.Option("--name", "-n", help="Custom environment name (default: pr-<number>)"),
+    ] = None,
+    no_fetch: Annotated[
+        bool,
+        typer.Option("--no-fetch", help="Skip fetching latest from remotes"),
+    ] = False,
+    no_templates: Annotated[
+        bool,
+        typer.Option("--no-templates", help="Skip template generation"),
+    ] = False,
+) -> None:
+    """
+    Create a review environment for a GitHub PR.
+
+    Examples:
+        qdpi review https://github.com/org/repo/pull/123
+        qdpi review backend#123 -r frontend:main
+        qdpi review backend#123 --name my-review
+    """
+    if not pr_ref:
+        handle_error(
+            "PR reference is required. "
+            "Use a GitHub PR URL or shorthand like 'backend#123'.\n"
+            "Example: qdpi review https://github.com/org/repo/pull/123"
+        )
+
+    try:
+        config = load_config()
+    except ConfigError as e:
+        handle_error(str(e))
+
+    repo_urls = {name: repo.url for name, repo in config.repositories.items()}
+    parsed = parse_pr_reference(pr_ref, repo_urls)
+
+    if not parsed:
+        handle_error(
+            f"Invalid PR reference: '{pr_ref}'. "
+            "Use a GitHub PR URL or shorthand like 'backend#123'."
+        )
+
+    config_repo_name = _find_config_repo_name(parsed.full_name, config)
+    if not config_repo_name:
+        handle_error(
+            f"Repository '{parsed.full_name}' not found in configuration. "
+            f"Add it to your config.yaml first."
+        )
+
+    with console.status(f"Fetching PR #{parsed.number} from {parsed.full_name}..."):
+        try:
+            pr_metadata = GitHubOperations.get_pr_metadata(parsed)
+        except GitHubError as e:
+            handle_error(str(e))
+
+    console.print(f"[bold]PR #{pr_metadata.number}:[/bold] {pr_metadata.title}")
+    console.print(f"[dim]Branch:[/dim] {pr_metadata.head_ref}")
+    console.print(f"[dim]Author:[/dim] @{pr_metadata.author}")
+    console.print()
+
+    env_name = name or f"pr-{parsed.number}"
+    repo_branches: dict[str, str] = {config_repo_name: pr_metadata.head_ref}
+
+    if repos:
+        for repo_spec in repos:
+            if ":" not in repo_spec:
+                handle_error(f"Invalid format: '{repo_spec}'. Use REPO:BRANCH format.")
+            repo_name, branch = repo_spec.split(":", 1)
+            repo_branches[repo_name] = branch
+
+    manager = EnvironmentManager(config)
+
+    pr_info = PRInfo(
+        number=pr_metadata.number,
+        url=pr_metadata.url,
+        title=pr_metadata.title,
+        author=pr_metadata.author,
+        head_ref=pr_metadata.head_ref,
+        repo_name=config_repo_name,
+    )
+
+    def on_branch_not_found(
+        repo_name: str,
+        branch: str,
+        available: list[str],
+    ) -> str | None:
+        console.print(f"[yellow]Branch '{branch}' does not exist in {repo_name}.[/yellow]")
+        if not available:
+            console.print("[red]No branches available.[/red]")
+            return None
+
+        console.print("Available branches:")
+        for b in available[:10]:
+            console.print(f"  - {b}")
+        if len(available) > 10:
+            console.print(f"  ... and {len(available) - 10} more")
+
+        default_branch = "main" if "main" in available else available[0]
+        base = Prompt.ask(
+            "Enter base branch for new branch",
+            choices=available,
+            default=default_branch,
+        )
+        return base
+
+    try:
+        with console.status(f"Creating review environment '{env_name}'..."):
+            env = manager.create(
+                name=env_name,
+                repo_branches=repo_branches,
+                fetch=not no_fetch,
+                render_templates=not no_templates,
+                on_branch_not_found=on_branch_not_found,
+                pr_info=pr_info,
+            )
+
+        console.print(f"\n[green]Review environment created:[/green] {env.path}")
+        console.print("\nRepositories:")
+        for repo in env.repos:
+            if repo.name == config_repo_name:
+                console.print(f"  - {repo.name} ({repo.branch}) [bold magenta]← PR[/bold magenta]")
+            else:
+                console.print(f"  - {repo.name} ({repo.branch})")
+
+        if env.generated_files:
+            console.print("\nGenerated files:")
+            for f in env.generated_files:
+                console.print(f"  - {f}")
+
+    except EnvironmentError as e:
+        handle_error(str(e))
+
+
+def _find_config_repo_name(github_full_name: str, config: Config) -> str | None:
+    """Find the config repo name that matches a GitHub owner/repo."""
+    for repo_name, repo_config in config.repositories.items():
+        parsed = parse_github_repo(repo_config.url)
+        if parsed and parsed.lower() == github_full_name.lower():
+            return repo_name
+    return None
+
+
 @app.command("list")
 def list_envs(
     as_json: Annotated[
@@ -225,14 +389,22 @@ def list_envs(
                     }
                     for r in status.repos
                 ]
-                data.append(
-                    {
-                        "name": env.name,
-                        "path": env.path,
-                        "exists": status.exists_on_disk,
-                        "repos": repos_status,
+                env_data: dict[str, object] = {
+                    "name": env.name,
+                    "path": env.path,
+                    "exists": status.exists_on_disk,
+                    "repos": repos_status,
+                }
+                if env.pr_info:
+                    env_data["pr_info"] = {
+                        "number": env.pr_info.number,
+                        "url": env.pr_info.url,
+                        "title": env.pr_info.title,
+                        "author": env.pr_info.author,
+                        "head_ref": env.pr_info.head_ref,
+                        "repo_name": env.pr_info.repo_name,
                     }
-                )
+                data.append(env_data)
             except EnvironmentError:
                 data.append(
                     {
@@ -278,8 +450,14 @@ def list_envs(
             else:
                 status_lines.append("[green]✓ clean[/green]")
 
+        env_display = env.name
+        if env.pr_info:
+            env_display = (
+                f'{env.name}\n[dim]└─ "{env.pr_info.title}" by @{env.pr_info.author}[/dim]'
+            )
+
         table.add_row(
-            env.name,
+            env_display,
             "\n".join(repo_lines),
             "\n".join(status_lines),
         )
@@ -305,7 +483,7 @@ def info(
         handle_error(str(e))
 
     if as_json:
-        data = {
+        data: dict[str, object] = {
             "name": env.name,
             "path": env.path,
             "created_at": env.created_at,
@@ -328,6 +506,15 @@ def info(
             "generated_files": env.generated_files,
             "symlinks": [{"source": s.source, "target": s.target} for s in env.symlinks],
         }
+        if env.pr_info:
+            data["pr_info"] = {
+                "number": env.pr_info.number,
+                "url": env.pr_info.url,
+                "title": env.pr_info.title,
+                "author": env.pr_info.author,
+                "head_ref": env.pr_info.head_ref,
+                "repo_name": env.pr_info.repo_name,
+            }
         console.print(json.dumps(data, indent=2))
         return
 
@@ -335,6 +522,12 @@ def info(
     console.print(f"\n[bold]Environment:[/bold] {env.name}")
     console.print(f"[bold]Path:[/bold] {env.path}")
     console.print(f"[bold]Created:[/bold] {env.created_at}")
+
+    if env.pr_info:
+        console.print("\n[bold magenta]Pull Request:[/bold magenta]")
+        console.print(f"  #{env.pr_info.number}: {env.pr_info.title}")
+        console.print(f"  Author: @{env.pr_info.author}")
+        console.print(f"  URL: {env.pr_info.url}")
 
     if not status.exists_on_disk:
         console.print("\n[red]⚠ Environment directory is missing![/red]")

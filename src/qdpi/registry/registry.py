@@ -31,6 +31,18 @@ class SymlinkEntry:
 
 
 @dataclass
+class PRInfo:
+    """GitHub PR metadata for review environments."""
+
+    number: int
+    url: str
+    title: str
+    author: str
+    head_ref: str  # The PR's branch name
+    repo_name: str  # Which configured repo this PR belongs to
+
+
+@dataclass
 class Environment:
     """A development environment."""
 
@@ -40,6 +52,7 @@ class Environment:
     repos: list[RepoInstance] = field(default_factory=list)
     generated_files: list[str] = field(default_factory=list)
     symlinks: list[SymlinkEntry] = field(default_factory=list)
+    pr_info: PRInfo | None = None
 
     @property
     def env_path(self) -> Path:
@@ -59,6 +72,7 @@ class Environment:
         repos: list[RepoInstance],
         generated_files: list[str],
         symlinks: list[SymlinkEntry],
+        pr_info: "PRInfo | None" = None,
     ) -> "Environment":
         """Create a new Environment with current timestamp."""
         return cls(
@@ -68,6 +82,7 @@ class Environment:
             repos=repos,
             generated_files=generated_files,
             symlinks=symlinks,
+            pr_info=pr_info,
         )
 
 
@@ -112,6 +127,8 @@ class EnvironmentRegistry:
         for name, env_data in data.get("environments", {}).items():
             repos = [RepoInstance(**r) for r in env_data.get("repos", [])]
             symlinks = [SymlinkEntry(**s) for s in env_data.get("symlinks", [])]
+            pr_info_data = env_data.get("pr_info")
+            pr_info = PRInfo(**pr_info_data) if pr_info_data else None
             environments[name] = Environment(
                 name=env_data["name"],
                 path=env_data["path"],
@@ -119,6 +136,7 @@ class EnvironmentRegistry:
                 repos=repos,
                 generated_files=env_data.get("generated_files", []),
                 symlinks=symlinks,
+                pr_info=pr_info,
             )
 
         return Registry(version=data.get("version", 1), environments=environments)

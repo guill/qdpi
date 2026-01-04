@@ -12,6 +12,7 @@ from qdpi.core.template import TemplateEngine, TemplateEngineError
 from qdpi.registry.registry import (
     Environment,
     EnvironmentRegistry,
+    PRInfo,
     RegistryError,
     RepoInstance,
     SymlinkEntry,
@@ -111,6 +112,7 @@ class EnvironmentManager:
         fetch: bool = True,
         render_templates: bool = True,
         on_branch_not_found: Callable[[str, str, list[str]], str | None] | None = None,
+        pr_info: PRInfo | None = None,
     ) -> Environment:
         """
         Create a new environment.
@@ -257,6 +259,7 @@ class EnvironmentManager:
                 repos=repo_instances,
                 generated_files=generated_files,
                 symlinks=active_symlinks,
+                pr_info=pr_info,
             )
 
             self.registry.add(environment)
