@@ -113,6 +113,7 @@ class EnvironmentManager:
         fetch: bool = True,
         render_templates: bool = True,
         on_branch_not_found: Callable[[str, str, list[str]], str | None] | None = None,
+        on_symlink_failed: Callable[[Path, Path], bool] | None = None,
         pr_info: PRInfo | None = None,
     ) -> Environment:
         """
@@ -126,6 +127,9 @@ class EnvironmentManager:
             on_branch_not_found: Callback when branch doesn't exist.
                 Signature: (repo_name: str, branch: str, available_branches: list[str]) -> str | None
                 Returns new branch name to create, or None to abort.
+            on_symlink_failed: Callback when symlink creation fails.
+                Signature: (source: Path, target: Path) -> bool
+                Returns True if symlink was created via alternative means (e.g., elevation).
 
         Returns:
             Created Environment object.
@@ -219,14 +223,23 @@ class EnvironmentManager:
                         target.symlink_to(source.resolve())
                     except OSError as e:
                         # Symlink creation failed (likely Windows without Developer Mode)
-                        # Warn and skip - copying wouldn't be useful since changes
-                        # wouldn't be reflected without manual re-copy
-                        warnings.warn(
-                            f"Failed to create symlink {target} -> {source}: {e}. "
-                            "On Windows, enable Developer Mode or run as administrator.",
-                            stacklevel=2,
-                        )
-                        continue
+                        # Try callback for elevation, or warn and skip
+                        if on_symlink_failed is not None:
+                            if on_symlink_failed(source.resolve(), target):
+                                pass  # Symlink created via callback
+                            else:
+                                warnings.warn(
+                                    f"Skipped symlink {target} -> {source}",
+                                    stacklevel=2,
+                                )
+                                continue
+                        else:
+                            warnings.warn(
+                                f"Failed to create symlink {target} -> {source}: {e}. "
+                                "On Windows, enable Developer Mode or run as administrator.",
+                                stacklevel=2,
+                            )
+                            continue
 
                     active_symlinks.append(
                         SymlinkEntry(
