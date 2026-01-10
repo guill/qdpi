@@ -2,6 +2,7 @@
 
 import contextlib
 import shutil
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -202,7 +203,7 @@ class EnvironmentManager:
                     )
                 )
 
-            # Step 6: Create symlinks (with fallback to copy on Windows without privileges)
+            # Step 6: Create symlinks (warn and skip on Windows without privileges)
             active_symlinks: list[SymlinkEntry] = []
             for symlink_config in self.config.symlinks:
                 if all(r in repo_names for r in symlink_config.when):
@@ -216,13 +217,16 @@ class EnvironmentManager:
 
                     try:
                         target.symlink_to(source.resolve())
-                    except OSError:
+                    except OSError as e:
                         # Symlink creation failed (likely Windows without Developer Mode)
-                        # Fall back to copying the directory/file
-                        if source.is_dir():
-                            shutil.copytree(source, target)
-                        else:
-                            shutil.copy2(source, target)
+                        # Warn and skip - copying wouldn't be useful since changes
+                        # wouldn't be reflected without manual re-copy
+                        warnings.warn(
+                            f"Failed to create symlink {target} -> {source}: {e}. "
+                            "On Windows, enable Developer Mode or run as administrator.",
+                            stacklevel=2,
+                        )
+                        continue
 
                     active_symlinks.append(
                         SymlinkEntry(

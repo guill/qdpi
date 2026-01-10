@@ -116,7 +116,7 @@ copy_files: []
   #   # when: [repo1]
 
 # Symlinks to create between repositories
-# Note: On Windows without Developer Mode, symlinks fall back to copying
+# Note: On Windows without Developer Mode, symlinks will be skipped with a warning
 symlinks: []
   # - source: repo1/shared_module
   #   target: repo2/src/shared_module
