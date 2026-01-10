@@ -4,6 +4,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, field_validator
 
+from qdpi.utils.paths import get_data_dir
+
 
 class RepoConfig(BaseModel):
     """Configuration for a single repository."""
@@ -47,20 +49,40 @@ class SymlinkConfig(BaseModel):
     when: list[str]
 
 
+def _default_base_repos_dir() -> Path:
+    """Get the default base repos directory (platform-specific)."""
+    return get_data_dir() / "repos"
+
+
+def _default_environments_dir() -> Path:
+    """Get the default environments directory."""
+    return Path.home() / "qdpi-envs"
+
+
 class Config(BaseModel):
     """Main QDPI configuration."""
 
-    base_repos_dir: Path = Path("~/.local/share/qdpi/repos")
-    environments_dir: Path = Path("~/qdpi-envs")
+    base_repos_dir: Path = Path()  # Set in validator if empty
+    environments_dir: Path = Path()  # Set in validator if empty
     repositories: dict[str, RepoConfig] = {}
     templates: list[TemplateConfig] = []
     copy_files: list[CopyFileConfig] = []
     symlinks: list[SymlinkConfig] = []
 
-    @field_validator("base_repos_dir", "environments_dir", mode="before")
+    @field_validator("base_repos_dir", mode="before")
     @classmethod
-    def expand_path(cls, v: str | Path) -> Path:
-        """Expand ~ in paths."""
+    def expand_base_repos_path(cls, v: str | Path | None) -> Path:
+        """Expand ~ in paths or use platform-specific default."""
+        if v is None or (isinstance(v, Path) and str(v) == "."):
+            return _default_base_repos_dir()
+        return Path(v).expanduser()
+
+    @field_validator("environments_dir", mode="before")
+    @classmethod
+    def expand_environments_path(cls, v: str | Path | None) -> Path:
+        """Expand ~ in paths or use platform-specific default."""
+        if v is None or (isinstance(v, Path) and str(v) == "."):
+            return _default_environments_dir()
         return Path(v).expanduser()
 
     model_config = {"extra": "ignore"}

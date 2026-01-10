@@ -3,6 +3,11 @@
 import re
 from pathlib import Path
 
+import platformdirs
+
+APP_NAME = "qdpi"
+APP_AUTHOR = "qdpi"
+
 
 def is_valid_environment_name(name: str) -> bool:
     """
@@ -22,13 +27,27 @@ def is_valid_environment_name(name: str) -> bool:
 
 
 def get_data_dir() -> Path:
-    """Get the QDPI data directory (~/.local/share/qdpi)."""
-    return Path("~/.local/share/qdpi").expanduser()
+    """
+    Get the QDPI data directory.
+
+    Platform-specific:
+    - Windows: %LOCALAPPDATA%/qdpi
+    - macOS: ~/Library/Application Support/qdpi
+    - Linux: ~/.local/share/qdpi
+    """
+    return Path(platformdirs.user_data_dir(APP_NAME, APP_AUTHOR))
 
 
 def get_config_dir() -> Path:
-    """Get the QDPI config directory (~/.config/qdpi)."""
-    return Path("~/.config/qdpi").expanduser()
+    """
+    Get the QDPI config directory.
+
+    Platform-specific:
+    - Windows: %APPDATA%/qdpi
+    - macOS: ~/Library/Application Support/qdpi
+    - Linux: ~/.config/qdpi
+    """
+    return Path(platformdirs.user_config_dir(APP_NAME, APP_AUTHOR))
 
 
 def get_registry_path() -> Path:

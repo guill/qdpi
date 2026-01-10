@@ -1,7 +1,12 @@
 """QDPI CLI - Quick Development PIpeline."""
 
+from __future__ import annotations
+
 import json
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -24,6 +29,7 @@ from qdpi.utils.github import (
     parse_github_repo,
     parse_pr_reference,
 )
+from qdpi.utils.symlinks import is_windows, prompt_and_create_symlink_elevated
 
 app = typer.Typer(
     name="qdpi",
@@ -156,6 +162,19 @@ def create(
         )
         return base
 
+    def on_symlink_failed(source: Path, target: Path) -> bool:
+        """Handle symlink failure - prompt for elevation on Windows."""
+        if not is_windows():
+            return False
+
+        def prompt_callback(msg: str) -> bool:
+            if yes:
+                console.print(f"[yellow]{msg}[/yellow]")
+                return True
+            return Confirm.ask(msg)
+
+        return prompt_and_create_symlink_elevated(source, target, prompt_callback)
+
     try:
         with console.status(f"Creating environment '{name}'..."):
             env = manager.create(
@@ -164,6 +183,7 @@ def create(
                 fetch=not no_fetch,
                 render_templates=not no_templates,
                 on_branch_not_found=on_branch_not_found,
+                on_symlink_failed=on_symlink_failed,
             )
 
         console.print(f"\n[green]Environment created:[/green] {env.path}")
