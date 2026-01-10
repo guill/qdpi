@@ -202,7 +202,7 @@ class EnvironmentManager:
                     )
                 )
 
-            # Step 6: Create symlinks
+            # Step 6: Create symlinks (with fallback to copy on Windows without privileges)
             active_symlinks: list[SymlinkEntry] = []
             for symlink_config in self.config.symlinks:
                 if all(r in repo_names for r in symlink_config.when):
@@ -213,7 +213,16 @@ class EnvironmentManager:
                         continue  # Skip if source doesn't exist
 
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    target.symlink_to(source.resolve())
+
+                    try:
+                        target.symlink_to(source.resolve())
+                    except OSError:
+                        # Symlink creation failed (likely Windows without Developer Mode)
+                        # Fall back to copying the directory/file
+                        if source.is_dir():
+                            shutil.copytree(source, target)
+                        else:
+                            shutil.copy2(source, target)
 
                     active_symlinks.append(
                         SymlinkEntry(
