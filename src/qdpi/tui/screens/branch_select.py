@@ -1,10 +1,11 @@
 """Branch selection screen for QDPI TUI."""
 
-from pathlib import Path  # noqa: F401
+from contextlib import suppress
 
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Button, Input, Label, OptionList, Static
@@ -87,7 +88,7 @@ class BranchSelectScreen(Screen[None]):
             status = "All branches loaded."
         self.query_one("#status-text", Static).update(status)
 
-    @work(exclusive=True, group="fetch-branches")
+    @work(exclusive=False, group="fetch-branches")
     async def _fetch_branches(self, repo: str) -> None:
         """Fetch branches for a repository in the background."""
         base_repo = self.config.base_repos_dir / repo
@@ -95,11 +96,18 @@ class BranchSelectScreen(Screen[None]):
         if not base_repo.exists():
             # Repository not cloned yet - we'll use a placeholder
             self.loading_repos.discard(repo)
-            self._update_status()
+            if self.is_running:
+                with suppress(NoMatches):
+                    self._update_status()
             return
 
         try:
             branches = await GitOperations.fetch_branches_async(base_repo)
+
+            # Guard against screen having been removed while we were fetching
+            if not self.is_running:
+                return
+
             self.repo_branch_lists[repo] = branches
 
             # Update the option list
@@ -113,7 +121,9 @@ class BranchSelectScreen(Screen[None]):
             pass
         finally:
             self.loading_repos.discard(repo)
-            self._update_status()
+            if self.is_running:
+                with suppress(NoMatches):
+                    self._update_status()
 
     @on(OptionList.OptionSelected)
     def on_option_selected(self, event: OptionList.OptionSelected) -> None:
