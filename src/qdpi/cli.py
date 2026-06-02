@@ -125,39 +125,26 @@ def create(
 
     manager = get_manager()
 
+    status_holder: dict[str, object] = {}
+
     def on_branch_not_found(
         repo_name: str,
         branch: str,
         available: list[str],
     ) -> str | None:
         """Handle missing branch - prompt for base branch."""
-        console.print(f"[yellow]Branch '{branch}' does not exist in {repo_name}.[/yellow]")
-        if not available:
-            console.print("[red]No branches available.[/red]")
-            return None
-
-        # Show available branches
-        console.print("Available branches:")
-        for b in available[:10]:  # Show first 10
-            console.print(f"  - {b}")
-        if len(available) > 10:
-            console.print(f"  ... and {len(available) - 10} more")
-
-        if yes:
-            # Default to main/master
-            default_branch = "main" if "main" in available else available[0]
-            console.print(f"Using '{default_branch}' as base branch")
-            return default_branch
-
-        base = Prompt.ask(
-            "Enter base branch for new branch",
-            choices=available,
-            default="main" if "main" in available else available[0],
-        )
-        return base
+        status = status_holder.get("status")
+        if status is not None:
+            status.stop()  # type: ignore[attr-defined]
+        try:
+            return _prompt_for_base_branch(repo_name, branch, available, auto=yes)
+        finally:
+            if status is not None:
+                status.start()  # type: ignore[attr-defined]
 
     try:
-        with console.status(f"Creating environment '{name}'..."):
+        with console.status(f"Creating environment '{name}'...") as status:
+            status_holder["status"] = status
             env = manager.create(
                 name=name,
                 repo_branches=repo_branches,
@@ -275,32 +262,25 @@ def review(
         repo_name=config_repo_name,
     )
 
+    status_holder: dict[str, object] = {}
+
     def on_branch_not_found(
         repo_name: str,
         branch: str,
         available: list[str],
     ) -> str | None:
-        console.print(f"[yellow]Branch '{branch}' does not exist in {repo_name}.[/yellow]")
-        if not available:
-            console.print("[red]No branches available.[/red]")
-            return None
-
-        console.print("Available branches:")
-        for b in available[:10]:
-            console.print(f"  - {b}")
-        if len(available) > 10:
-            console.print(f"  ... and {len(available) - 10} more")
-
-        default_branch = "main" if "main" in available else available[0]
-        base = Prompt.ask(
-            "Enter base branch for new branch",
-            choices=available,
-            default=default_branch,
-        )
-        return base
+        status = status_holder.get("status")
+        if status is not None:
+            status.stop()  # type: ignore[attr-defined]
+        try:
+            return _prompt_for_base_branch(repo_name, branch, available, auto=False)
+        finally:
+            if status is not None:
+                status.start()  # type: ignore[attr-defined]
 
     try:
-        with console.status(f"Creating review environment '{env_name}'..."):
+        with console.status(f"Creating review environment '{env_name}'...") as status:
+            status_holder["status"] = status
             env = manager.create(
                 name=env_name,
                 repo_branches=repo_branches,
@@ -334,6 +314,69 @@ def _find_config_repo_name(github_full_name: str, config: Config) -> str | None:
         if parsed and parsed.lower() == github_full_name.lower():
             return repo_name
     return None
+
+
+def _default_base_branch(available: list[str]) -> str:
+    """Pick a sensible default base branch from the available list."""
+    for candidate in ("main", "master"):
+        if candidate in available:
+            return candidate
+    return available[0]
+
+
+def _prompt_for_base_branch(
+    repo_name: str,
+    branch: str,
+    available: list[str],
+    auto: bool,
+) -> str | None:
+    """Ask the user which existing branch to use as a base for a new branch.
+
+    Free-text input with validation - Prompt.ask(choices=...) is unusable when
+    the list has hundreds of entries because Rich dumps every choice into the
+    prompt line.
+    """
+    console.print(f"[yellow]Branch '{branch}' does not exist in {repo_name}.[/yellow]")
+    if not available:
+        console.print("[red]No branches available.[/red]")
+        return None
+
+    default_branch = _default_base_branch(available)
+
+    if auto:
+        console.print(f"Using '{default_branch}' as base branch")
+        return default_branch
+
+    console.print(
+        f"Available branches: {len(available)} total "
+        f"(showing first 10, type any branch name)"
+    )
+    for b in available[:10]:
+        console.print(f"  - {b}")
+    if len(available) > 10:
+        console.print(f"  ... and {len(available) - 10} more")
+
+    available_set = set(available)
+    while True:
+        base = Prompt.ask("Enter base branch", default=default_branch).strip()
+        if not base:
+            continue
+        if base in available_set:
+            return base
+        matches = [b for b in available if base.lower() in b.lower()]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            console.print(f"[red]No branch matches '{base}'. Try again.[/red]")
+            continue
+        console.print(
+            f"[yellow]'{base}' matches {len(matches)} branches. "
+            "Be more specific:[/yellow]"
+        )
+        for m in matches[:15]:
+            console.print(f"  - {m}")
+        if len(matches) > 15:
+            console.print(f"  ... and {len(matches) - 15} more")
 
 
 @app.command("list")

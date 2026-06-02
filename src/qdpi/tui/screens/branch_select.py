@@ -1,10 +1,11 @@
 """Branch selection screen for QDPI TUI."""
 
-from pathlib import Path  # noqa: F401
+import contextlib
 
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Button, Input, Label, OptionList, Static
@@ -42,6 +43,9 @@ class BranchSelectScreen(Screen[None]):
         self.current_repo_index = 0
         self.repo_branch_lists: dict[str, list[str]] = {}
         self.loading_repos: set[str] = set()
+        self.user_edited: set[str] = {
+            repo for repo, value in self.branches.items() if value
+        }
 
     def compose(self) -> ComposeResult:
         with Container(id="main-container"):
@@ -50,12 +54,12 @@ class BranchSelectScreen(Screen[None]):
 
             with Vertical(id="branch-selectors"):
                 for repo in self.repos:
-                    default_branch = self.branches.get(repo, "main")
+                    initial_value = self.branches.get(repo, "")
                     with Container(classes="repo-branch-item", id=f"repo-{repo}"):
                         yield Label(f"{repo}:")
                         yield Input(
-                            value=default_branch,
-                            placeholder="branch name",
+                            value=initial_value,
+                            placeholder="detecting default branch...",
                             id=f"branch-input-{repo}",
                         )
                         yield OptionList(id=f"branch-list-{repo}")
@@ -72,7 +76,6 @@ class BranchSelectScreen(Screen[None]):
             self.loading_repos.add(repo)
             self._fetch_branches(repo)
 
-        # Focus first input
         if self.repos:
             first_input = self.query_one(f"#branch-input-{self.repos[0]}", Input)
             first_input.focus()
@@ -80,37 +83,59 @@ class BranchSelectScreen(Screen[None]):
         self._update_status()
 
     def _update_status(self) -> None:
-        """Update the status text."""
+        """Update the status text, tolerating an unmounted screen."""
         if self.loading_repos:
-            status = f"Fetching branches for: {', '.join(self.loading_repos)}..."
+            status = f"Fetching branches for: {', '.join(sorted(self.loading_repos))}..."
         else:
             status = "All branches loaded."
-        self.query_one("#status-text", Static).update(status)
+        with contextlib.suppress(NoMatches):
+            self.query_one("#status-text", Static).update(status)
 
-    @work(exclusive=True, group="fetch-branches")
+    @work(group="fetch-branches")
     async def _fetch_branches(self, repo: str) -> None:
-        """Fetch branches for a repository in the background."""
+        """Fetch branches for a repository concurrently with siblings."""
         base_repo = self.config.base_repos_dir / repo
 
         if not base_repo.exists():
-            # Repository not cloned yet - we'll use a placeholder
             self.loading_repos.discard(repo)
             self._update_status()
             return
 
         try:
-            branches = await GitOperations.fetch_branches_async(base_repo)
+            default_branch = ""
+            try:
+                default_branch = await GitOperations.get_default_branch_async(base_repo)
+            except Exception:
+                default_branch = ""
+
+            if default_branch and repo not in self.user_edited:
+                try:
+                    input_widget = self.query_one(
+                        f"#branch-input-{repo}", Input
+                    )
+                except NoMatches:
+                    input_widget = None
+                if input_widget is not None and not input_widget.value:
+                    self.branches[repo] = default_branch
+                    input_widget.value = default_branch
+                    self.user_edited.discard(repo)
+
+            try:
+                branches = await GitOperations.fetch_branches_async(base_repo)
+            except Exception:
+                branches = []
+
             self.repo_branch_lists[repo] = branches
 
-            # Update the option list
-            option_list = self.query_one(f"#branch-list-{repo}", OptionList)
-            option_list.clear_options()
-            for branch in branches[:20]:  # Limit to 20 branches for performance
-                option_list.add_option(Option(branch, id=branch))
+            try:
+                option_list = self.query_one(f"#branch-list-{repo}", OptionList)
+            except NoMatches:
+                option_list = None
+            if option_list is not None:
+                option_list.clear_options()
+                for branch in branches[:20]:
+                    option_list.add_option(Option(branch, id=branch))
 
-        except Exception:
-            # Non-fatal - user can still type branch name
-            pass
         finally:
             self.loading_repos.discard(repo)
             self._update_status()
@@ -136,10 +161,16 @@ class BranchSelectScreen(Screen[None]):
         if input_id and input_id.startswith("branch-input-"):
             repo = input_id.replace("branch-input-", "")
             self.branches[repo] = event.value
+            if event.value:
+                self.user_edited.add(repo)
+            else:
+                self.user_edited.discard(repo)
 
-            # Filter option list if available
             if repo in self.repo_branch_lists:
-                option_list = self.query_one(f"#branch-list-{repo}", OptionList)
+                try:
+                    option_list = self.query_one(f"#branch-list-{repo}", OptionList)
+                except NoMatches:
+                    return
                 option_list.clear_options()
                 query = event.value.lower()
                 for branch in self.repo_branch_lists[repo]:
@@ -163,13 +194,23 @@ class BranchSelectScreen(Screen[None]):
 
     def _submit(self) -> None:
         """Submit the branch selections."""
-        # Collect all branch values from inputs
+        collected: dict[str, str] = {}
         for repo in self.repos:
             input_widget = self.query_one(f"#branch-input-{repo}", Input)
             branch = input_widget.value.strip()
             if not branch:
-                self.notify(f"Please enter a branch for {repo}", severity="warning")
+                if repo in self.loading_repos:
+                    self.notify(
+                        f"Still detecting default branch for {repo}. "
+                        "Wait a moment or type a branch name.",
+                        severity="warning",
+                    )
+                else:
+                    self.notify(
+                        f"Please enter a branch for {repo}", severity="warning"
+                    )
                 return
-            self.branches[repo] = branch
+            collected[repo] = branch
 
+        self.branches = collected
         self.post_message(self.Submitted(self.branches))

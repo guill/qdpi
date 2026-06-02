@@ -88,28 +88,65 @@ class GitOperations:
         return "main"  # Ultimate fallback
 
     @staticmethod
-    def branch_exists(repo_path: Path, branch: str) -> bool:
-        """Check if a branch exists (local or remote)."""
-        # Check local
-        result = GitOperations._run(
-            ["rev-parse", "--verify", branch],
-            cwd=repo_path,
-            check=False,
-        )
-        if result.returncode == 0:
-            return True
+    def list_remotes(repo_path: Path) -> list[str]:
+        """Return remote names, preferring origin first."""
+        result = GitOperations._run(["remote"], cwd=repo_path, check=False)
+        if result.returncode != 0:
+            return ["origin"]
+        remotes = [r.strip() for r in result.stdout.splitlines() if r.strip()]
+        ordered: list[str] = []
+        if "origin" in remotes:
+            ordered.append("origin")
+        for r in remotes:
+            if r != "origin":
+                ordered.append(r)
+        return ordered or ["origin"]
 
-        # Check remote
-        result = GitOperations._run(
-            ["rev-parse", "--verify", f"origin/{branch}"],
+    @staticmethod
+    def resolve_branch_ref(repo_path: Path, branch: str) -> str | None:
+        """Resolve a branch shortname to a ref that exists in the repo.
+
+        Searches each remote first (origin preferred), then local branches.
+        Remotes are preferred so that a freshly fetched environment is based
+        on the up-to-date remote ref (e.g. ``origin/main``) rather than a
+        possibly-stale local branch of the same name. Falls back to a local
+        branch only when the branch exists nowhere on a remote.
+
+        Returns the ref string suitable for `git worktree add ... <ref>`,
+        or None if the branch can't be found anywhere.
+        """
+        for remote in GitOperations.list_remotes(repo_path):
+            candidate = f"{remote}/{branch}"
+            result = GitOperations._run(
+                ["rev-parse", "--verify", candidate],
+                cwd=repo_path,
+                check=False,
+            )
+            if result.returncode == 0:
+                return candidate
+
+        local = GitOperations._run(
+            ["rev-parse", "--verify", f"refs/heads/{branch}"],
             cwd=repo_path,
             check=False,
         )
-        return result.returncode == 0
+        if local.returncode == 0:
+            return branch
+
+        return None
+
+    @staticmethod
+    def branch_exists(repo_path: Path, branch: str) -> bool:
+        """Check if a branch exists locally or on any configured remote."""
+        return GitOperations.resolve_branch_ref(repo_path, branch) is not None
 
     @staticmethod
     def list_branches(repo_path: Path, remote_only: bool = True) -> list[str]:
-        """List all branches."""
+        """List all branches.
+
+        Strips every known remote prefix so the result is a flat list of
+        branch shortnames suitable for selection by the user.
+        """
         if remote_only:
             result = GitOperations._run(
                 ["branch", "-r", "--format=%(refname:short)"],
@@ -121,12 +158,18 @@ class GitOperations:
                 cwd=repo_path,
             )
 
-        branches = []
+        remotes = GitOperations.list_remotes(repo_path)
+        branches: list[str] = []
         for line in result.stdout.strip().split("\n"):
-            if line and not line.endswith("/HEAD"):
-                # Remove 'origin/' prefix for remote branches
-                branch = line.replace("origin/", "")
-                branches.append(branch)
+            if not line or line.endswith("/HEAD"):
+                continue
+            stripped = line
+            for remote in remotes:
+                prefix = f"{remote}/"
+                if stripped.startswith(prefix):
+                    stripped = stripped[len(prefix) :]
+                    break
+            branches.append(stripped)
 
         return sorted(set(branches))
 
@@ -172,26 +215,38 @@ class GitOperations:
             The actual branch name used (may differ if tracking branch created).
         """
         if create_branch_from:
-            # Create a new branch from the specified base
+            base_ref = GitOperations.resolve_branch_ref(base_repo, create_branch_from)
+            if base_ref is None:
+                raise GitError(
+                    f"Base branch '{create_branch_from}' not found on any remote"
+                )
             GitOperations._run(
-                ["worktree", "add", "-b", branch, str(dest), f"origin/{create_branch_from}"],
+                ["worktree", "add", "-b", branch, str(dest), base_ref],
                 cwd=base_repo,
             )
             return branch
 
-        # Check if branch is already in a worktree
+        ref = GitOperations.resolve_branch_ref(base_repo, branch)
+        if ref is None:
+            raise GitError(f"Branch '{branch}' not found locally or on any remote")
+
         if GitOperations.is_branch_in_worktree(base_repo, branch):
-            # Create a tracking branch instead
             tracking_branch = GitOperations.generate_tracking_branch_name(branch)
             GitOperations._run(
-                ["worktree", "add", "-b", tracking_branch, str(dest), f"origin/{branch}"],
+                ["worktree", "add", "-b", tracking_branch, str(dest), ref],
                 cwd=base_repo,
             )
             return tracking_branch
 
-        # Normal case: branch exists and is not in another worktree
+        if ref == branch:
+            GitOperations._run(
+                ["worktree", "add", str(dest), branch],
+                cwd=base_repo,
+            )
+            return branch
+
         GitOperations._run(
-            ["worktree", "add", str(dest), branch],
+            ["worktree", "add", "-b", branch, str(dest), ref],
             cwd=base_repo,
         )
         return branch
@@ -243,6 +298,44 @@ class GitOperations:
                 branches.append(branch)
 
         return sorted(set(branches))
+
+    @staticmethod
+    async def get_default_branch_async(repo_path: Path) -> str:
+        """
+        Get the default branch (usually main or master) asynchronously.
+
+        Mirrors get_default_branch() but uses asyncio.create_subprocess_exec
+        so it can run concurrently with other fetches in TUI workers.
+        """
+        # Try to get from remote HEAD
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode == 0:
+            return stdout.decode().strip().split("/")[-1]
+
+        # Fall back to checking common defaults
+        for branch in ["main", "master"]:
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "rev-parse",
+                "--verify",
+                f"origin/{branch}",
+                cwd=repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            if proc.returncode == 0:
+                return branch
+
+        return "main"  # Ultimate fallback
 
     @staticmethod
     def get_status(repo_path: Path) -> RepoStatus:

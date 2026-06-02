@@ -6,6 +6,7 @@ from textual.binding import Binding
 from qdpi.config.loader import ConfigError, load_config
 from qdpi.config.models import Config
 from qdpi.core.environment import EnvironmentError, EnvironmentManager
+from qdpi.core.git import GitError, GitOperations
 from qdpi.tui.screens.branch_select import BranchSelectScreen
 from qdpi.tui.screens.confirmation import ConfirmationScreen
 from qdpi.tui.screens.name_input import NameInputScreen
@@ -137,17 +138,16 @@ class QdpiApp(App[int]):
         self.selected_repos = event.repos
         self.pop_screen()
 
-        # Initialize branch defaults
-        for repo in self.selected_repos:
-            if repo not in self.repo_branches:
-                self.repo_branches[repo] = "main"
-
         assert self.config is not None
         self.push_screen(
             BranchSelectScreen(
                 self.config,
                 self.selected_repos,
-                self.repo_branches,
+                {
+                    repo: branch
+                    for repo, branch in self.repo_branches.items()
+                    if repo in self.selected_repos
+                },
             )
         )
 
@@ -177,9 +177,18 @@ class QdpiApp(App[int]):
                 branch: str,
                 available: list[str],
             ) -> str | None:
-                # In TUI, we should have validated branches already
-                # but just in case, use main as fallback
-                return "main" if "main" in available else (available[0] if available else None)
+                assert self.config is not None
+                base_repo = self.config.base_repos_dir / repo_name
+                try:
+                    default = GitOperations.get_default_branch(base_repo)
+                except GitError:
+                    default = ""
+                if default and default in available:
+                    return default
+                for candidate in ("main", "master"):
+                    if candidate in available:
+                        return candidate
+                return available[0] if available else None
 
             env = self.manager.create(
                 name=self.env_name,
