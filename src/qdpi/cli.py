@@ -609,6 +609,42 @@ def info(
 
 
 @app.command()
+def update(
+    name: Annotated[str, typer.Argument(help="Environment name")],
+) -> None:
+    """Fast-forward each repository in an environment to its upstream.
+
+    Runs the equivalent of `git pull --ff-only` on every worktree's current
+    branch. Repos with uncommitted changes, no upstream, or a diverged local
+    branch are skipped and reported.
+    """
+    manager = get_manager()
+
+    try:
+        with console.status(f"Updating environment '{name}'..."):
+            update_result = manager.update(name)
+    except EnvironmentError as e:
+        handle_error(str(e))
+
+    console.print(f"\n[bold]Updated environment:[/bold] {name}\n")
+
+    styles = {
+        "updated": "[green]✓ updated[/green]",
+        "up_to_date": "[green]✓ up to date[/green]",
+        "skipped": "[yellow]⊘ skipped[/yellow]",
+        "error": "[red]✗ error[/red]",
+    }
+
+    for repo in update_result.repos:
+        r = repo.result
+        label = styles.get(r.outcome, r.outcome)
+        line = f"  [cyan]{repo.name}[/cyan] ({r.branch}): {label}"
+        if r.detail and r.outcome != "up_to_date":
+            line += f" [dim]- {r.detail}[/dim]"
+        console.print(line)
+
+
+@app.command()
 def delete(
     names: Annotated[
         list[str],

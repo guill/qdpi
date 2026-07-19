@@ -23,6 +23,16 @@ class RepoStatus:
     error: str | None = None
 
 
+@dataclass
+class PullResult:
+    """Outcome of a fast-forward pull for a single repository."""
+
+    outcome: str  # "updated" | "up_to_date" | "skipped" | "error"
+    branch: str
+    upstream: str | None = None
+    detail: str | None = None
+
+
 class GitOperations:
     """Git operations using subprocess."""
 
@@ -57,10 +67,117 @@ class GitOperations:
         GitOperations._run(["fetch", "--all", "--prune"], cwd=repo_path)
 
     @staticmethod
+    def pull_ff_only(repo_path: Path, fetch: bool = True) -> PullResult:
+        """Fast-forward the current branch to its configured upstream.
+
+        Rather than relying on ``git pull``'s upstream resolution (which fails
+        when a branch has no upstream, or is ambiguous with multiple remotes),
+        this fetches then fast-forwards explicitly to the branch's tracked
+        remote ref via ``git merge --ff-only``. Never creates a merge commit
+        and never touches the working tree beyond a fast-forward.
+
+        Returns a PullResult describing the outcome; does not raise for the
+        expected "no upstream" or "non-fast-forward" cases so the caller can
+        report per-repo results without aborting the whole environment.
+        """
+        branch = GitOperations.get_current_branch(repo_path) or "(detached)"
+
+        upstream = GitOperations.get_upstream_ref(repo_path)
+        if upstream is None:
+            return PullResult(
+                outcome="skipped",
+                branch=branch,
+                upstream=None,
+                detail="no upstream configured",
+            )
+
+        if fetch:
+            try:
+                GitOperations.fetch(repo_path)
+            except GitError as e:
+                return PullResult(
+                    outcome="error",
+                    branch=branch,
+                    upstream=upstream,
+                    detail=f"fetch failed: {e}",
+                )
+            upstream = GitOperations.get_upstream_ref(repo_path) or upstream
+
+        counts = GitOperations._run(
+            ["rev-list", "--left-right", "--count", f"HEAD...{upstream}"],
+            cwd=repo_path,
+            check=False,
+        )
+        if counts.returncode == 0:
+            parts = counts.stdout.strip().split("\t")
+            if len(parts) == 2:
+                commits_ahead_of_upstream = int(parts[0])
+                commits_behind_upstream = int(parts[1])
+                if commits_behind_upstream == 0:
+                    return PullResult(
+                        outcome="up_to_date",
+                        branch=branch,
+                        upstream=upstream,
+                        detail="already up to date",
+                    )
+                if commits_ahead_of_upstream > 0:
+                    return PullResult(
+                        outcome="skipped",
+                        branch=branch,
+                        upstream=upstream,
+                        detail=(
+                            f"local branch has diverged "
+                            f"({commits_ahead_of_upstream} ahead, "
+                            f"{commits_behind_upstream} behind)"
+                        ),
+                    )
+
+        merge = GitOperations._run(
+            ["merge", "--ff-only", upstream],
+            cwd=repo_path,
+            check=False,
+        )
+        if merge.returncode != 0:
+            detail = (merge.stderr or merge.stdout).strip() or "fast-forward failed"
+            return PullResult(
+                outcome="error",
+                branch=branch,
+                upstream=upstream,
+                detail=detail,
+            )
+
+        return PullResult(
+            outcome="updated",
+            branch=branch,
+            upstream=upstream,
+            detail=merge.stdout.strip() or None,
+        )
+
+    @staticmethod
     def get_current_branch(repo_path: Path) -> str:
         """Get the current branch name."""
         result = GitOperations._run(["branch", "--show-current"], cwd=repo_path)
         return result.stdout.strip()
+
+    @staticmethod
+    def get_upstream_ref(repo_path: Path) -> str | None:
+        """Return the configured upstream ref for the current branch.
+
+        qdpi worktrees are frequently checked out on auto-generated branch
+        names like ``tracking/<hex>/main``, so the local branch name is not a
+        reliable indicator of what to pull. The branch's configured upstream
+        (e.g. ``origin/main``, ``origin/master``, ``origin/feature/auth``) is
+        the source of truth. Returns None when no upstream is configured.
+        """
+        result = GitOperations._run(
+            ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            cwd=repo_path,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        ref = result.stdout.strip()
+        return ref or None
 
     @staticmethod
     def get_default_branch(repo_path: Path) -> str:

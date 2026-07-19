@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from qdpi.config.models import Config
-from qdpi.core.git import GitError, GitOperations, RepoStatus
+from qdpi.core.git import GitError, GitOperations, PullResult, RepoStatus
 from qdpi.core.template import TemplateEngine, TemplateEngineError
 from qdpi.registry.registry import (
     Environment,
@@ -41,6 +41,22 @@ class RepoStatusInfo:
     name: str
     branch: str
     status: RepoStatus
+
+
+@dataclass
+class RepoUpdateResult:
+    """Fast-forward update result for one repo within an environment."""
+
+    name: str
+    result: PullResult
+
+
+@dataclass
+class EnvironmentUpdateResult:
+    """Aggregate fast-forward update result for an environment."""
+
+    name: str
+    repos: list[RepoUpdateResult]
 
 
 class EnvironmentManager:
@@ -375,6 +391,60 @@ class EnvironmentManager:
             exists_on_disk=exists_on_disk,
             repos=repo_statuses,
         )
+
+    def update(self, name: str) -> EnvironmentUpdateResult:
+        """Fast-forward every repo in an environment to its upstream.
+
+        Each worktree's current branch is fast-forwarded to its configured
+        upstream (``git merge --ff-only``). Worktrees with uncommitted changes
+        are skipped so an in-progress edit is never disturbed. Missing
+        worktrees and repos without an upstream are reported as skips rather
+        than raising, so one problem repo does not abort the rest.
+        """
+        try:
+            env = self.registry.get(name)
+        except RegistryError as e:
+            raise EnvironmentError(str(e)) from e
+
+        results: list[RepoUpdateResult] = []
+        for repo in env.repos:
+            worktree_path = Path(repo.worktree_path)
+
+            if not worktree_path.exists():
+                results.append(
+                    RepoUpdateResult(
+                        name=repo.name,
+                        result=PullResult(
+                            outcome="skipped",
+                            branch=repo.branch,
+                            detail="worktree not found",
+                        ),
+                    )
+                )
+                continue
+
+            status = GitOperations.get_status(worktree_path)
+            if status.has_uncommitted:
+                results.append(
+                    RepoUpdateResult(
+                        name=repo.name,
+                        result=PullResult(
+                            outcome="skipped",
+                            branch=status.current_branch or repo.branch,
+                            detail=f"{status.uncommitted_count} uncommitted change(s)",
+                        ),
+                    )
+                )
+                continue
+
+            results.append(
+                RepoUpdateResult(
+                    name=repo.name,
+                    result=GitOperations.pull_ff_only(worktree_path),
+                )
+            )
+
+        return EnvironmentUpdateResult(name=name, repos=results)
 
     def list_all(self) -> list[Environment]:
         """List all environments."""
