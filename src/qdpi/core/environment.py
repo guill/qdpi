@@ -215,6 +215,7 @@ class EnvironmentManager:
                         name=repo_name,
                         branch=actual_branch,
                         worktree_path=str(worktree_path),
+                        description=self.config.repositories[repo_name].description,
                     )
                 )
 

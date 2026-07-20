@@ -60,7 +60,10 @@ class TemplateEngine:
             # Build context
             context = {
                 "env_name": env_name,
-                "repos": [{"name": r.name, "branch": r.branch} for r in repos],
+                "repos": [
+                    {"name": r.name, "branch": r.branch, "description": r.description}
+                    for r in repos
+                ],
                 "repo_names": {r.name for r in repos},
                 "symlinks": [{"source": s.source, "target": s.target} for s in symlinks],
                 "env_path": str(env_path),

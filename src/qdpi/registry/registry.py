@@ -15,6 +15,7 @@ class RepoInstance:
     name: str
     branch: str
     worktree_path: str  # Stored as string for JSON serialization
+    description: str | None = None
 
     @property
     def path(self) -> Path:

@@ -9,6 +9,7 @@ class RepoConfig(BaseModel):
     """Configuration for a single repository."""
 
     url: str
+    description: str | None = None
 
 
 class TemplateConfig(BaseModel):
