@@ -57,7 +57,24 @@ class QdpiApp(App[int]):
     }
     
     .repo-branch-item {
+        height: auto;
         margin: 0 0 1 0;
+    }
+    
+    .repo-branch-item Input {
+        height: 3;
+        margin: 0;
+    }
+    
+    .repo-branch-item OptionList {
+        height: auto;
+        max-height: 6;
+        margin: 0;
+    }
+    
+    #branch-selectors {
+        height: 1fr;
+        overflow-y: auto;
     }
     """
 

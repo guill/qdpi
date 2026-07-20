@@ -4,7 +4,7 @@ import contextlib
 
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.screen import Screen
@@ -52,7 +52,7 @@ class BranchSelectScreen(Screen[None]):
             yield Static("[3/4]", classes="step-indicator")
             yield Label("Select branch for each repository:", classes="title")
 
-            with Vertical(id="branch-selectors"):
+            with VerticalScroll(id="branch-selectors"):
                 for repo in self.repos:
                     initial_value = self.branches.get(repo, "")
                     with Container(classes="repo-branch-item", id=f"repo-{repo}"):
